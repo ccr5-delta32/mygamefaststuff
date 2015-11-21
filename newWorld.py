@@ -257,5 +257,3 @@ class World(ShowBase):
     
 world = World()
 world.run()
-
-# test for git

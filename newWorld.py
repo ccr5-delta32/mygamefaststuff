@@ -16,10 +16,10 @@ import sys
 class World(ShowBase):
     def __init__(self):
         ShowBase.__init__(self)
-        self.debug = True
+        self.debug = False 
         self.statusLabel = self.makeStatusLabel(0)
         self.collisionLabel = self.makeStatusLabel(1)
-        if os.path.isfile("./assets/1stmap.bam"):
+        if os.path.isfile("assets/1stmap.bam"):
             self.world = self.loader.loadModel("assets/1stmap.bam")
             self.world.reparentTo(self.render)
         else:
@@ -29,7 +29,7 @@ class World(ShowBase):
             terrain.setColorMap("./assets/1stmap_TM.png")
             terrain.setBruteforce(True)
             root = terrain.getRoot()
-            root.reparentTo(render)
+            root.reparentTo(self.render)
             root.setSz(60)
             terrain.generate()
             root.writeBamFile("./assets/1stmap.bam")
@@ -38,7 +38,7 @@ class World(ShowBase):
        
         # Player
         self.maxspeed = 100.0
-        self.startPos = Vec3(200, 200, 65)
+        self.startPos = Vec3(200, 200, 35)
         self.startHpr = Vec3(225, 0, 0)
         self.player = self.loader.loadModel("assets/alliedflanker.egg")
         self.player.setScale(0.2, 0.2, 0.2)
@@ -69,27 +69,41 @@ class World(ShowBase):
                align=TextNode.ALeft, scale = 0.08, mayChange = 1)
 
     def createEnvironment(self):
-        colour = (0.0, 0.0, 0.0)
+        # Fog
         expfog = Fog("scene-wide-fog")
-        expfog.setColor(*colour)
-        expfog.setExpDensity(0.004)
-        render.setFog(expfog)
-        base.setBackgroundColor(*colour)
+        expfog.setColor(0.5, 0.5, 0.5)
+        expfog.setExpDensity(0.002)
+        self.render.setFog(expfog)
 
-        skydome = loader.loadModel("assets/sky.egg")
-        skydome.setEffect(CompassEffect.make(self.render))
-        skydome.setScale(self.maxdistance/2)
-        skydome.setZ(-65)
-        skydome.reparentTo(self.camera)
+        # Sky
+        skysphere = self.loader.loadModel("assets/blue-sky-sphere")
+        skysphere.setEffect(CompassEffect.make(self.render))
+        skysphere.setScale(0.08)
+        skysphere.reparentTo(self.camera)
 
+        # Lights
         ambientLight = AmbientLight("ambientLight")
         ambientLight.setColor(Vec4(0.6, 0.6, 0.6, 1))
+        self.render.setLight(self.render.attachNewNode(ambientLight))
+
         directionalLight = DirectionalLight("directionalLight")
-        directionalLight.setDirection(Vec3(0, -10, -10))
-        directionalLight.setColor(Vec4(1, 1, 1, 1))
-        directionalLight.setSpecularColor(Vec4(1, 1, 1, 1))
-        render.setLight(render.attachNewNode(ambientLight))
-        render.setLight(render.attachNewNode(directionalLight))
+        directionalLight.setColor(VBase4(0.8, 0.8, 0.5, 1))
+        dlnp = self.render.attachNewNode(directionalLight)
+        dlnp.setPos(0, 0, 260)
+        dlnp.lookAt(self.player)
+        self.render.setLight(dlnp)
+
+        # Water
+        self.water = self.loader.loadModel('assets/square.egg')
+        self.water.setSx(self.worldsize * 2)
+        self.water.setSy(self.worldsize * 2)
+        self.water.setPos(self.worldsize / 2, self.worldsize / 2, 25)
+        self.water.setTransparency(TransparencyAttrib.MAlpha)
+        newTS = TextureStage('1')
+        self.water.setTexture(newTS, self.loader.loadTexture('assets/water.png'))
+        self.water.setTexScale(newTS, 4)
+        self.water.reparentTo(self.render)
+        LerpTexOffsetInterval(self.water, 200, (1, 0), (0, 0), textureStage=newTS).loop()
 
     def keyboardSetup(self):
         self.keyMap = {"left":0, "right":0, "climb":0, "fall":0, "accelerate":0, "decelerate":0, "fire":0}
@@ -122,7 +136,9 @@ class World(ShowBase):
             entry = self.playerGroundHandler.getEntry(i)
             if (self.debug == True):
                 self.collisionLabel.setText("DEAD:" + str(globalClock.getFrameTime()))
-
+            if (self.exploding == False):
+                self.player.setZ(entry.getSurfacePoint(self.render).getZ()+10)
+                self.explosionSequence()
         return Task.cont
 
     def resetPlayer(self):
@@ -136,6 +152,7 @@ class World(ShowBase):
         climbfactor = scalefactor * 0.5
         bankfactor = scalefactor
         speedfactor = scalefactor * 2.9
+        gravityfactor = ((self.maxspeed - self.speed) / 100.0) * 2.0
         
         # Climb and Fall
         if (self.keyMap["climb"] != 0 and self.speed >0.00):
@@ -195,6 +212,11 @@ class World(ShowBase):
             self.player.setX(self.player, -speedfactor)
             self.applyBoundaries()
 
+        if self.exploding == False:
+            self.player.setX(self.player, -speedfactor)
+            self.applyBoundaries()
+            self.player.setZ(self.player, -gravityfactor)
+
     def applyBoundaries(self):
         # respect max camera distance else you 
         # cannot see the floor post loop the loop!
@@ -204,7 +226,7 @@ class World(ShowBase):
         elif (self.player.getZ() < 0):
             self.player.setZ(0)
 
-        # and now the X/Y world boundaries:
+        # X/Y world boundaries:
         boundary = False
         if (self.player.getX() < 0):
             self.player.setX(0)
@@ -218,7 +240,7 @@ class World(ShowBase):
         elif (self.player.getY() > self.worldsize):
             self.player.setY(self.worldsize)
             boundary = True
-        # in case boundary is true
+
         if boundary == True and self.textCounter > 30:
             self.statusLabel.setText("STATUS: MAP END; TURN AROUND")
         elif self.textCounter > 30:
@@ -227,17 +249,17 @@ class World(ShowBase):
         if self.textCounter > 30:
             self.textCounter = 0
         else:
-            self.textCounter = self.textCounter + 1
+            self.textCounter += 1
 
     def updateCamera(self):
-        # see issue content for how we calculated these:
-        self.camera.setPos(self.player, 25.6225, 3.8807, 10.2779)
-        self.camera.setHpr(self.player, 94.8996, -16.6549, 1.55508)
+        percent = (self.speed / self.maxspeed)
+        self.camera.setPos(self.player, 19.6225 + (10 * percent), 3.8807, 10.2779)
+        self.camera.setHpr(self.player, 94.8996, -12.6549, 1.55508)
 
     def setupCollisions(self):
         self.collTrav = CollisionTraverser()
 
-        self.playerGroundSphere = CollisionSphere(0, 1.5, -1.5, 0.1)
+        self.playerGroundSphere = CollisionSphere(0, 1.5, -1.5, 1.5)
         self.playerGroundCol = CollisionNode("playersphere")
         self.playerGroundCol.addSolid(self.playerGroundSphere)
 
@@ -250,10 +272,32 @@ class World(ShowBase):
         self.playerGroundHandler = CollisionHandlerQueue()
         self.collTrav.addCollider(self.playerGroundColNp, self.playerGroundHandler)
 
+        self.water.setCollideMask(BitMask32.bit(0))
+
         #Debug
         if (self.debug == True):
             self.playerGroundColNp.show()
             self.collTrav.showCollisions(self.render)
-    
+
+    def explosionSequence(self):
+        self.exploding = True
+        self.explosionModel.setPosHpr( Vec3(self.player.getX(), self.player.getY(),\
+                self.player.getZ() ), Vec3( self.player.getH(), 0, 0) )
+        self.player.hide()
+        taskMgr.add( self.expandExplosion, 'expandExplosion' )
+
+    def expandExplosion( self, Task ):
+        if self.explosionModel.getScale() < VBase3( 60.0, 60.0, 60.0 ):
+            factor = globalClock.getDt()
+            scale = self.explosionModel.getScale()
+            scale = scale + VBase3( factor * 40, factor * 40, factor * 40 )
+            self.explosionModel.setScale(scale)
+            return Task.cont
+        else:
+            self.explosionModel.setScale(0)
+            self.exploding = False
+            self.resetPlayer()
+
+
 world = World()
 world.run()
